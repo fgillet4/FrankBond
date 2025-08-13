@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "imports": {
+    "express": "npm:express@4.18.2",
+    "redis": "npm:redis@4.6.7",
+    "aws-sdk": "npm:aws-sdk@2.1400.0",
+    "cors": "npm:cors@2.8.5",
+    "helmet": "npm:helmet@7.0.0",
+    "dotenv": "npm:dotenv@16.0.3"
+  },
+  "tasks": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "deno run --allow-net --allow-read --allow-write --allow-env backend/server.js",
+    "build": "cd frontend && npm run build",
+    "test": "deno test --allow-all",
+    "deploy": "./deploy/deploy.sh"
+  },
+  "permissions": {
+    "allow-net": true,
+    "allow-read": true,
+    "allow-write": true,
+    "allow-env": true
+  }
+}
