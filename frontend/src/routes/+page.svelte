@@ -39,23 +39,33 @@
 			width: 800 / zoom,
 			height: 600 / zoom
 		};
+		console.log('ViewBox updated:', viewBox, 'Pan:', pan, 'Zoom:', zoom);
 	}
 	
 	function getCanvasCoordinates(event) {
 		const rect = svgElement.getBoundingClientRect();
+		
+		// Calculate coordinates relative to the SVG element
 		const screenX = event.clientX - rect.left;
 		const screenY = event.clientY - rect.top;
 		
-		// Convert screen coordinates to SVG viewBox coordinates
+		// Convert screen coordinates to world coordinates using proper ratios
+		// The viewBox defines the coordinate system of the SVG content
 		let x = (screenX / rect.width) * viewBox.width + viewBox.x;
 		let y = (screenY / rect.height) * viewBox.height + viewBox.y;
 		
 		console.log('Debug coordinates:', {
+			mouseScreenX: event.clientX,
+			mouseScreenY: event.clientY,
+			rectLeft: rect.left,
+			rectTop: rect.top,
+			rectBottom: rect.bottom,
 			screenX, screenY,
 			worldX: x, worldY: y,
 			zoom, panX: pan.x, panY: pan.y,
 			viewBox: viewBox,
-			rectWidth: rect.width, rectHeight: rect.height
+			rectWidth: rect.width, rectHeight: rect.height,
+			calculation: `(${screenY} / ${rect.height}) * ${viewBox.height} + ${viewBox.y} = ${y}`
 		});
 		
 		// Snap to grid if enabled
@@ -650,6 +660,36 @@
 					</text>
 				</g>
 			{/each}
+			
+			<!-- Debug cursor indicator -->
+			{#if debugCursor.visible}
+				<circle 
+					cx={debugCursor.x} 
+					cy={debugCursor.y} 
+					r="5"
+					fill="red"
+					opacity="0.7"
+					pointer-events="none"
+				/>
+				<line 
+					x1={debugCursor.x - 10} 
+					y1={debugCursor.y} 
+					x2={debugCursor.x + 10} 
+					y2={debugCursor.y}
+					stroke="red"
+					stroke-width="1"
+					pointer-events="none"
+				/>
+				<line 
+					x1={debugCursor.x} 
+					y1={debugCursor.y - 10} 
+					x2={debugCursor.x} 
+					y2={debugCursor.y + 10}
+					stroke="red"
+					stroke-width="1"
+					pointer-events="none"
+				/>
+			{/if}
 		</svg>
 	</div>
 </div>
