@@ -43,29 +43,46 @@
 	}
 	
 	function getCanvasCoordinates(event) {
+		// Get the SVG's actual rendered viewport
 		const rect = svgElement.getBoundingClientRect();
 		
-		// Calculate coordinates relative to the SVG element
-		const screenX = event.clientX - rect.left;
-		const screenY = event.clientY - rect.top;
+		// Calculate the aal viewBox aspect ratio vs rendered aspect ratio
+		const viewBoxAspect = viewBox.width / viewBox.height;
+		const renderedAspect = rect.width / rect.height;
 		
-		// Convert screen coordinates to world coordinates using proper ratios
-		// The viewBox defines the coordinate system of the SVG content
-		let x = (screenX / rect.width) * viewBox.width + viewBox.x;
-		let y = (screenY / rect.height) * viewBox.height + viewBox.y;
+		let actualSVGWidth, actualSVGHeight, offsetX, offsetY;
+		
+		if (viewBoxAspect > renderedAspect) {
+			// ViewBox is widtainer - letterboxed vertically
+			actualSVGWidth = rect.width;
+			actualSVGHeight = rect.width / viewBoxAspect;
+			offsetX = 0;
+			offsetY = (rect.height - actualSVGHeight) / 2;
+		} else {
+			// ViewBox is taller than container - letterboxed horizontally
+			actualSVGWidth = rect.height * viewBoxAspect;
+			actualSVGHeight = rect.height;
+			offsetX = (rect.width - actualSVGWidth) / 2;
+			offsetY = 0;
+		}
+		
+		// Adjust mouse coordinates for letterboxing
+		const adjustedX = event.offsetX - offsetX;
+		const adjustedY = event.offsetY - offsetY;
+		
+		// Convert to world coordinates
+		let x = (adjustedX / actualSVGWidth) * viewBox.width + viewBox.x;
+		let y = (adjustedY / actualSVGHeight) * viewBox.height + viewBox.y;
 		
 		console.log('Debug coordinates:', {
-			mouseScreenX: event.clientX,
-			mouseScreenY: event.clientY,
-			rectLeft: rect.left,
-			rectTop: rect.top,
-			rectBottom: rect.bottom,
-			screenX, screenY,
+			mouseOffsetX: event.offsetX,
+			mouseOffsetY: event.offsetY,
+			adjustedX, adjustedY,
+			actualSVGWidth, actualSVGHeight,
+			offsetX, offsetY,
 			worldX: x, worldY: y,
-			zoom, panX: pan.x, panY: pan.y,
-			viewBox: viewBox,
-			rectWidth: rect.width, rectHeight: rect.height,
-			calculation: `(${screenY} / ${rect.height}) * ${viewBox.height} + ${viewBox.y} = ${y}`
+			viewBoxAspect, renderedAspect,
+			rectWidth: rect.width, rectHeight: rect.height
 		});
 		
 		// Snap to grid if enabled
@@ -564,6 +581,7 @@
 			width="100%" 
 			height="100%" 
 			viewBox="{viewBox.x} {viewBox.y} {viewBox.width} {viewBox.height}"
+			preserveAspectRatio="xMidYMid meet"
 			on:click={handleSVGClick}
 			on:mousedown={handleMouseDown}
 			on:mousemove={(e) => { handleMouseMove(e); handleSVGMouseMove(e); }}
