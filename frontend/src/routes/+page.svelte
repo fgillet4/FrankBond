@@ -183,18 +183,31 @@
 		debugCursor.visible = false;
 	}
 	
+	let justFinishedBoxSelect = false;
+	
 	function handleSVGClick(event) {
-		if (isPanning || isBoxSelecting) return;
+		// Don't handle click if we just finished a box selection
+		if (isPanning || justFinishedBoxSelect) {
+			justFinishedBoxSelect = false;
+			return;
+		}
 		
 		const coords = getCanvasCoordinates(event);
+		console.log('SVG clicked, tool:', selectedTool, 'coords:', coords);
 		
 		if (selectedTool === 'atom') {
 			addAtom(coords.x, coords.y);
 		} else if (selectedTool === 'select') {
 			// Clear selection if clicking on empty space and not holding shift
 			if (!event.shiftKey) {
+				console.log('Clearing selection (clicked empty space)');
 				selectedAtoms.clear();
 				selectedAtoms = new Set(selectedAtoms);
+				// Update atom objects for visual feedback
+				atoms = atoms.map(atom => ({
+					...atom,
+					selected: false
+				}));
 			}
 		}
 	}
@@ -215,6 +228,7 @@
 	}
 	
 	function selectAtom(atomId, addToSelection = false) {
+		console.log('Selecting atom:', atomId, 'addToSelection:', addToSelection);
 		if (addToSelection) {
 			// Toggle selection for this atom
 			if (selectedAtoms.has(atomId)) {
@@ -228,6 +242,7 @@
 			selectedAtoms.add(atomId);
 		}
 		selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
+		console.log('Selected atoms after:', Array.from(selectedAtoms));
 		
 		// Update atom objects for visual feedback
 		atoms = atoms.map(atom => ({
@@ -322,6 +337,7 @@
 	}
 	
 	function deleteSelected() {
+		console.log('Delete called, selected atoms:', selectedAtoms.size, Array.from(selectedAtoms));
 		if (selectedAtoms.size > 0) {
 			const atomIdsToDelete = Array.from(selectedAtoms);
 			
@@ -372,6 +388,14 @@
 			isPanning = true;
 			lastPanPoint = { x: event.clientX, y: event.clientY };
 			svgElement.style.cursor = 'grabbing';
+		} else if (event.button === 0 && selectedTool === 'select') {
+			// Start box selection
+			event.preventDefault();
+			const coords = getCanvasCoordinates(event);
+			isBoxSelecting = true;
+			boxStart = { x: coords.x, y: coords.y };
+			boxEnd = { x: coords.x, y: coords.y };
+			console.log('Starting box selection at:', coords);
 		}
 	}
 	
@@ -387,6 +411,11 @@
 			
 			lastPanPoint = { x: event.clientX, y: event.clientY };
 			updateViewBox();
+		} else if (isBoxSelecting) {
+			// Update box selection
+			event.preventDefault();
+			const coords = getCanvasCoordinates(event);
+			boxEnd = { x: coords.x, y: coords.y };
 		}
 	}
 	
@@ -394,6 +423,39 @@
 		if (isPanning) {
 			isPanning = false;
 			svgElement.style.cursor = 'default';
+		} else if (isBoxSelecting) {
+			// Complete box selection
+			isBoxSelecting = false;
+			justFinishedBoxSelect = true;
+			
+			// Find atoms within selection box
+			const minX = Math.min(boxStart.x, boxEnd.x);
+			const maxX = Math.max(boxStart.x, boxEnd.x);
+			const minY = Math.min(boxStart.y, boxEnd.y);
+			const maxY = Math.max(boxStart.y, boxEnd.y);
+			
+			const selectedInBox = atoms.filter(atom => 
+				atom.x >= minX && atom.x <= maxX && 
+				atom.y >= minY && atom.y <= maxY
+			);
+			
+			console.log('Box selection complete. Found atoms:', selectedInBox.length, selectedInBox.map(a => a.id));
+			
+			// Add to selection (or replace if not holding shift)
+			if (!event.shiftKey) {
+				selectedAtoms.clear();
+			}
+			
+			selectedInBox.forEach(atom => selectedAtoms.add(atom.id));
+			selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
+			
+			console.log('Total selected atoms after box select:', Array.from(selectedAtoms));
+			
+			// Update atom objects for visual feedback
+			atoms = atoms.map(atom => ({
+				...atom,
+				selected: selectedAtoms.has(atom.id)
+			}));
 		}
 	}
 	
@@ -522,6 +584,12 @@
 	<div class="toolbar">
 		<div class="tool-group">
 			<h3>Tools</h3>
+			<button 
+				class="tool-btn {selectedTool === 'select' ? 'active' : ''}"
+				on:click={() => selectedTool = 'select'}
+			>
+				Select
+			</button>
 			<button 
 				class="tool-btn {selectedTool === 'atom' ? 'active' : ''}"
 				on:click={() => selectedTool = 'atom'}
@@ -724,8 +792,8 @@
 								} else {
 									startBond(atom.id, e);
 								}
-							} else {
-								selectAtom(atom.id);
+							} else if (selectedTool === 'select') {
+								selectAtom(atom.id, e.shiftKey);
 							}
 						}}
 						style="cursor: pointer;"
@@ -744,6 +812,21 @@
 					</text>
 				</g>
 			{/each}
+			
+			<!-- Box selection rectangle -->
+			{#if isBoxSelecting}
+				<rect 
+					x={Math.min(boxStart.x, boxEnd.x)} 
+					y={Math.min(boxStart.y, boxEnd.y)} 
+					width={Math.abs(boxEnd.x - boxStart.x)} 
+					height={Math.abs(boxEnd.y - boxStart.y)}
+					fill="rgba(0, 102, 204, 0.2)"
+					stroke="#0066cc"
+					stroke-width="1"
+					stroke-dasharray="5,5"
+					pointer-events="none"
+				/>
+			{/if}
 			
 			<!-- Debug cursor indicator -->
 			{#if debugCursor.visible}
