@@ -22,9 +22,15 @@
 	// Selection state
 	let selectedAtoms = new Set();
 	let selectedArrows = new Set();
+	let selectedBonds = new Set();
 	
 	// Context menu state
 	let contextMenu = { visible: false, x: 0, y: 0 };
+	
+	// Undo/Redo state management (double stack)
+	let undoStack = [];
+	let redoStack = [];
+	const MAX_UNDO_HISTORY = 50;
 	let isBoxSelecting = false;
 	let boxStart = { x: 0, y: 0 };
 	let boxEnd = { x: 0, y: 0 };
@@ -226,8 +232,10 @@
 				console.log('Clearing selection (clicked empty space)');
 				selectedAtoms.clear();
 				selectedArrows.clear();
+				selectedBonds.clear();
 				selectedAtoms = new Set(selectedAtoms);
 				selectedArrows = new Set(selectedArrows);
+				selectedBonds = new Set(selectedBonds);
 				// Update atom objects for visual feedback
 				atoms = atoms.map(atom => ({
 					...atom,
@@ -238,6 +246,8 @@
 	}
 	
 	function addAtom(x, y) {
+		saveState(); // Save state before making changes
+		
 		const newAtom = {
 			id: generateId(),
 			x,
@@ -289,6 +299,8 @@
 	function completeBond(endAtomId, event) {
 		if (tempBond && tempBond.startAtomId !== endAtomId) {
 			event.stopPropagation();
+			saveState(); // Save state before making changes
+			
 			const newBond = {
 				id: generateId(),
 				atomId1: tempBond.startAtomId,
@@ -327,6 +339,8 @@
 	
 	function completeArrow() {
 		if (tempArrow) {
+			saveState(); // Save state before making changes
+			
 			const newArrow = {
 				id: generateId(),
 				startX: tempArrow.startX,
@@ -342,6 +356,8 @@
 	}
 	
 	function addLonePair(atomId, angle) {
+		saveState(); // Save state before making changes
+		
 		const newLonePair = {
 			id: generateId(),
 			atomId: atomId,
@@ -362,9 +378,97 @@
 		};
 	}
 	
+	function saveState() {
+		const state = {
+			atoms: JSON.parse(JSON.stringify(atoms)),
+			bonds: JSON.parse(JSON.stringify(bonds)),
+			arrows: JSON.parse(JSON.stringify(arrows)),
+			lonePairs: JSON.parse(JSON.stringify(lonePairs)),
+			selectedAtoms: new Set(selectedAtoms),
+			selectedArrows: new Set(selectedArrows),
+			selectedBonds: new Set(selectedBonds)
+		};
+		
+		undoStack.push(state);
+		if (undoStack.length > MAX_UNDO_HISTORY) {
+			undoStack.shift(); // Remove oldest state
+		}
+		
+		// Clear redo stack when new action is performed
+		redoStack = [];
+		
+		console.log('State saved, undo stack size:', undoStack.length);
+	}
+	
+	function restoreState(state) {
+		atoms = JSON.parse(JSON.stringify(state.atoms));
+		bonds = JSON.parse(JSON.stringify(state.bonds));
+		arrows = JSON.parse(JSON.stringify(state.arrows));
+		lonePairs = JSON.parse(JSON.stringify(state.lonePairs));
+		selectedAtoms = new Set(state.selectedAtoms);
+		selectedArrows = new Set(state.selectedArrows);
+		selectedBonds = new Set(state.selectedBonds);
+		
+		// Rebuild graph representation
+		moleculeGraph.nodes.clear();
+		moleculeGraph.edges.clear();
+		moleculeGraph.adjacency.clear();
+		
+		atoms.forEach(atom => {
+			moleculeGraph.nodes.set(atom.id, atom);
+			moleculeGraph.adjacency.set(atom.id, new Set());
+		});
+		
+		bonds.forEach(bond => {
+			moleculeGraph.edges.set(bond.id, bond);
+			if (moleculeGraph.adjacency.has(bond.atomId1) && moleculeGraph.adjacency.has(bond.atomId2)) {
+				moleculeGraph.adjacency.get(bond.atomId1).add(bond.atomId2);
+				moleculeGraph.adjacency.get(bond.atomId2).add(bond.atomId1);
+			}
+		});
+	}
+	
+	function undo() {
+		if (undoStack.length > 0) {
+			// Save current state to redo stack
+			const currentState = {
+				atoms: JSON.parse(JSON.stringify(atoms)),
+				bonds: JSON.parse(JSON.stringify(bonds)),
+				arrows: JSON.parse(JSON.stringify(arrows)),
+				lonePairs: JSON.parse(JSON.stringify(lonePairs)),
+				selectedAtoms: new Set(selectedAtoms),
+				selectedArrows: new Set(selectedArrows),
+				selectedBonds: new Set(selectedBonds)
+			};
+			redoStack.push(currentState);
+			
+			// Restore previous state
+			const previousState = undoStack.pop();
+			restoreState(previousState);
+			
+			console.log('Undo performed, undo stack:', undoStack.length, 'redo stack:', redoStack.length);
+		}
+	}
+	
+	function redo() {
+		if (redoStack.length > 0) {
+			// Save current state to undo stack
+			saveState();
+			undoStack.pop(); // Remove the duplicate we just added
+			
+			// Restore next state
+			const nextState = redoStack.pop();
+			restoreState(nextState);
+			
+			console.log('Redo performed, undo stack:', undoStack.length, 'redo stack:', redoStack.length);
+		}
+	}
+	
 	function startAtomDrag(atomId, event) {
 		if (selectedTool === 'select' && selectedAtoms.has(atomId)) {
 			event.stopPropagation();
+			saveState(); // Save state before dragging starts
+			
 			isDragging = true;
 			draggedAtomId = atomId;
 			
@@ -392,6 +496,21 @@
 		
 		// Force bonds to re-render by triggering reactivity
 		bonds = [...bonds];
+	}
+	
+	function isBondInBox(bond, minX, maxX, minY, maxY) {
+		const atom1 = atoms.find(a => a.id === bond.atomId1);
+		const atom2 = atoms.find(a => a.id === bond.atomId2);
+		
+		if (!atom1 || !atom2) return false;
+		
+		const startInBox = atom1.x >= minX && atom1.x <= maxX && 
+		                   atom1.y >= minY && atom1.y <= maxY;
+		const endInBox = atom2.x >= minX && atom2.x <= maxX && 
+		                 atom2.y >= minY && atom2.y <= maxY;
+		
+		// Bond is selected if either endpoint is in the box
+		return startInBox || endInBox;
 	}
 	
 	function isArrowInBox(arrow, minX, maxX, minY, maxY) {
@@ -456,8 +575,10 @@
 	}
 	
 	function deleteSelected() {
-		console.log('Delete called, selected atoms:', selectedAtoms.size, 'arrows:', selectedArrows.size);
-		if (selectedAtoms.size > 0 || selectedArrows.size > 0) {
+		console.log('Delete called, selected atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size);
+		if (selectedAtoms.size > 0 || selectedArrows.size > 0 || selectedBonds.size > 0) {
+			saveState(); // Save state before making changes
+			
 			const atomIdsToDelete = Array.from(selectedAtoms);
 			
 			// Remove atoms
@@ -476,6 +597,21 @@
 			
 			// Remove selected arrows
 			arrows = arrows.filter(arrow => !selectedArrows.has(arrow.id));
+			
+			// Remove selected bonds (independent of atom deletion)
+			const selectedBondsToDelete = bonds.filter(bond => selectedBonds.has(bond.id));
+			bonds = bonds.filter(bond => !selectedBonds.has(bond.id));
+			
+			// Update graph representation for deleted bonds
+			selectedBondsToDelete.forEach(bond => {
+				moleculeGraph.edges.delete(bond.id);
+				if (moleculeGraph.adjacency.has(bond.atomId1)) {
+					moleculeGraph.adjacency.get(bond.atomId1).delete(bond.atomId2);
+				}
+				if (moleculeGraph.adjacency.has(bond.atomId2)) {
+					moleculeGraph.adjacency.get(bond.atomId2).delete(bond.atomId1);
+				}
+			});
 			
 			// Update graph representation
 			atomIdsToDelete.forEach(atomId => {
@@ -496,21 +632,26 @@
 			
 			selectedAtoms.clear();
 			selectedArrows.clear();
+			selectedBonds.clear();
 			selectedAtoms = new Set(selectedAtoms);
 			selectedArrows = new Set(selectedArrows);
+			selectedBonds = new Set(selectedBonds);
 		}
 	}
 	
 	function selectAll() {
-		// Select all atoms and arrows
+		// Select all atoms, bonds, and arrows
 		selectedAtoms.clear();
 		selectedArrows.clear();
+		selectedBonds.clear();
 		
 		atoms.forEach(atom => selectedAtoms.add(atom.id));
 		arrows.forEach(arrow => selectedArrows.add(arrow.id));
+		bonds.forEach(bond => selectedBonds.add(bond.id));
 		
 		selectedAtoms = new Set(selectedAtoms);
 		selectedArrows = new Set(selectedArrows);
+		selectedBonds = new Set(selectedBonds);
 		
 		// Update atom visual feedback
 		atoms = atoms.map(atom => ({
@@ -518,7 +659,7 @@
 			selected: true
 		}));
 		
-		console.log('Selected all - atoms:', selectedAtoms.size, 'arrows:', selectedArrows.size);
+		console.log('Selected all - atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size);
 	}
 	
 	function handleKeyDown(event) {
@@ -527,6 +668,13 @@
 		} else if ((event.metaKey || event.ctrlKey) && event.key === 'a') {
 			event.preventDefault();
 			selectAll();
+		} else if ((event.metaKey || event.ctrlKey) && event.key === 'z') {
+			event.preventDefault();
+			if (event.shiftKey) {
+				redo();
+			} else {
+				undo();
+			}
 		}
 	}
 	
@@ -627,20 +775,27 @@
 				isArrowInBox(arrow, minX, maxX, minY, maxY)
 			);
 			
-			console.log('Box selection complete. Found atoms:', selectedInBox.length, 'arrows:', arrowsInBox.length);
+			const bondsInBox = bonds.filter(bond => 
+				isBondInBox(bond, minX, maxX, minY, maxY)
+			);
+			
+			console.log('Box selection complete. Found atoms:', selectedInBox.length, 'arrows:', arrowsInBox.length, 'bonds:', bondsInBox.length);
 			
 			// Add to selection (or replace if not holding shift)
 			if (!event.shiftKey) {
 				selectedAtoms.clear();
 				selectedArrows.clear();
+				selectedBonds.clear();
 			}
 			
 			selectedInBox.forEach(atom => selectedAtoms.add(atom.id));
 			arrowsInBox.forEach(arrow => selectedArrows.add(arrow.id));
+			bondsInBox.forEach(bond => selectedBonds.add(bond.id));
 			selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
 			selectedArrows = new Set(selectedArrows); // Trigger reactivity
+			selectedBonds = new Set(selectedBonds); // Trigger reactivity
 			
-			console.log('Total selected - atoms:', Array.from(selectedAtoms), 'arrows:', Array.from(selectedArrows));
+			console.log('Total selected - atoms:', Array.from(selectedAtoms), 'arrows:', Array.from(selectedArrows), 'bonds:', Array.from(selectedBonds));
 			
 			// Update atom objects for visual feedback
 			atoms = atoms.map(atom => ({
@@ -675,9 +830,9 @@
 			pan = { ...pan }; // Trigger reactivity
 			updateViewBox();
 		} else {
-			// Pan with trackpad scroll
-			pan.x += event.deltaX / zoom;
-			pan.y += event.deltaY / zoom;
+			// Pan with trackpad scroll (inverted for natural feeling)
+			pan.x -= event.deltaX / zoom;
+			pan.y -= event.deltaY / zoom;
 			pan = { ...pan }; // Trigger reactivity
 			updateViewBox();
 		}
@@ -896,10 +1051,16 @@
 		
 		<div class="tool-group">
 			<h3>Actions</h3>
+			<button class="tool-btn" on:click={undo} disabled={undoStack.length === 0}>
+				Undo (⌘Z)
+			</button>
+			<button class="tool-btn" on:click={redo} disabled={redoStack.length === 0}>
+				Redo (⌘⇧Z)
+			</button>
 			<button class="action-btn" on:click={deleteSelected}>
 				Delete Selected
 			</button>
-			<button class="action-btn" on:click={() => { atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedAtoms = new Set(); }}>
+			<button class="action-btn" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); selectedAtoms = new Set(); selectedArrows = new Set(); selectedBonds = new Set(); }}>
 				Clear All
 			</button>
 		</div>
@@ -951,16 +1112,32 @@
 				{#each getBondPaths(bond) as path}
 					<path 
 						d={path}
-						stroke="#000000"
-						stroke-width="2"
+						stroke={selectedBonds.has(bond.id) ? "#0066cc" : "#000000"}
+						stroke-width={selectedBonds.has(bond.id) ? "3" : "2"}
 						fill="none"
-						on:click={() => {
+						on:click={(e) => {
 							if (selectedTool === 'bond') {
+								saveState(); // Save state before changing bond type
 								const currentTypeIndex = bondTypes.indexOf(bond.type);
 								const nextTypeIndex = (currentTypeIndex + 1) % bondTypes.length;
 								bonds = bonds.map(b => 
 									b.id === bond.id ? { ...b, type: bondTypes[nextTypeIndex] } : b
 								);
+							} else if (selectedTool === 'select') {
+								e.stopPropagation();
+								if (e.shiftKey) {
+									// Toggle bond selection
+									if (selectedBonds.has(bond.id)) {
+										selectedBonds.delete(bond.id);
+									} else {
+										selectedBonds.add(bond.id);
+									}
+								} else {
+									// Single selection
+									selectedBonds.clear();
+									selectedBonds.add(bond.id);
+								}
+								selectedBonds = new Set(selectedBonds);
 							}
 						}}
 						style="cursor: pointer;"
@@ -1181,14 +1358,21 @@
 		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
 		on:click|stopPropagation
 	>
+		<div class="context-item {undoStack.length === 0 ? 'disabled' : ''}" on:click={() => { if (undoStack.length > 0) { undo(); hideContextMenu(); } }}>
+			Undo (⌘Z)
+		</div>
+		<div class="context-item {redoStack.length === 0 ? 'disabled' : ''}" on:click={() => { if (redoStack.length > 0) { redo(); hideContextMenu(); } }}>
+			Redo (⌘⇧Z)
+		</div>
+		<hr class="context-divider">
 		<div class="context-item" on:click={() => { selectAll(); hideContextMenu(); }}>
-			Select All (Cmd+A)
+			Select All (⌘A)
 		</div>
 		<div class="context-item" on:click={() => { deleteSelected(); hideContextMenu(); }}>
 			Delete Selected
 		</div>
 		<hr class="context-divider">
-		<div class="context-item" on:click={() => { atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); hideContextMenu(); }}>
+		<div class="context-item" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); hideContextMenu(); }}>
 			Clear All
 		</div>
 	</div>
@@ -1386,9 +1570,24 @@
 		background-color: #f5f5f5;
 	}
 	
+	.context-item.disabled {
+		color: #999;
+		cursor: not-allowed;
+	}
+	
+	.context-item.disabled:hover {
+		background-color: transparent;
+	}
+	
 	.context-divider {
 		border: none;
 		border-top: 1px solid #eee;
 		margin: 4px 0;
+	}
+	
+	.tool-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+		background-color: #f8f9fa;
 	}
 </style>
