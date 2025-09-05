@@ -4,10 +4,23 @@
 	let atoms = [];
 	let bonds = [];
 	
+	// Graph representation of the molecule
+	let moleculeGraph = {
+		nodes: new Map(), // atom id -> atom data
+		edges: new Map(), // bond id -> {atomId1, atomId2, type}
+		adjacency: new Map() // atom id -> Set of connected atom ids
+	};
+	
 	let selectedElement = 'C';
 	let selectedTool = 'atom';
 	let tempBond = null;
 	let svgElement;
+	
+	// Selection state
+	let selectedAtoms = new Set();
+	let isBoxSelecting = false;
+	let boxStart = { x: 0, y: 0 };
+	let boxEnd = { x: 0, y: 0 };
 	
 	// Pan and zoom state
 	let zoom = 1;
@@ -17,7 +30,7 @@
 	let viewBox = { x: 0, y: 0, width: 800, height: 600 };
 	
 	// Grid system
-	let gridEnabled = false;
+	let gridEnabled = true;
 	let gridType = 'square'; // 'square' or 'hexagonal'
 	let gridSize = 40; // Distance between grid points
 	let snapToGrid = true;
@@ -25,8 +38,12 @@
 	// Debug cursor
 	let debugCursor = { x: 0, y: 0, visible: false };
 	
+	
 	const elements = ['C', 'O', 'N', 'S', 'P', 'H', 'F', 'Cl', 'Br', 'I'];
 	const bondTypes = ['single', 'double', 'triple'];
+	
+	// Reactive statement to regenerate grid when type or size changes
+	$: gridPoints = generateGridPoints(gridType, gridSize, viewBox);
 	
 	function generateId() {
 		return Math.random().toString(36).substr(2, 9);
@@ -39,7 +56,6 @@
 			width: 800 / zoom,
 			height: 600 / zoom
 		};
-		console.log('ViewBox updated:', viewBox, 'Pan:', pan, 'Zoom:', zoom);
 	}
 	
 	function getCanvasCoordinates(event) {
@@ -74,21 +90,9 @@
 		let x = (adjustedX / actualSVGWidth) * viewBox.width + viewBox.x;
 		let y = (adjustedY / actualSVGHeight) * viewBox.height + viewBox.y;
 		
-		console.log('Debug coordinates:', {
-			mouseOffsetX: event.offsetX,
-			mouseOffsetY: event.offsetY,
-			adjustedX, adjustedY,
-			actualSVGWidth, actualSVGHeight,
-			offsetX, offsetY,
-			worldX: x, worldY: y,
-			viewBoxAspect, renderedAspect,
-			rectWidth: rect.width, rectHeight: rect.height
-		});
-		
 		// Snap to grid if enabled
 		if (snapToGrid && gridEnabled) {
 			const snapped = snapToGridPoint(x, y);
-			console.log('Snapped from', {x, y}, 'to', snapped);
 			x = snapped.x;
 			y = snapped.y;
 		}
@@ -103,19 +107,21 @@
 				y: Math.round(y / gridSize) * gridSize
 			};
 		} else if (gridType === 'hexagonal') {
-			// Hexagonal grid snapping
-			const hexHeight = gridSize * Math.sqrt(3);
-			const hexWidth = gridSize * 1.5;
+			// Hexagonal grid with proper equidistant spacing for 120° angles
+			const hexHeight = gridSize * Math.sqrt(3) / 2; // Vertical spacing between rows
+			const hexWidth = gridSize; // Horizontal spacing between columns
 			
+			// Calculate which row and column this point is closest to
 			const row = Math.round(y / hexHeight);
-			const col = Math.round(x / hexWidth);
+			const col = Math.round((x - (row % 2) * (hexWidth / 2)) / hexWidth);
 			
-			// Offset every other row for hexagonal pattern
-			const offsetX = (row % 2) * (gridSize * 0.75);
+			// Calculate the actual grid position
+			const gridX = col * hexWidth + (row % 2) * (hexWidth / 2);
+			const gridY = row * hexHeight;
 			
 			return {
-				x: col * hexWidth + offsetX,
-				y: row * hexHeight
+				x: gridX,
+				y: gridY
 			};
 		}
 		return { x, y };
@@ -140,9 +146,9 @@
 				}
 			}
 		} else if (gridType === 'hexagonal') {
-			// Hexagonal grid
-			const hexHeight = gridSize * Math.sqrt(3);
-			const hexWidth = gridSize * 1.5;
+			// Hexagonal grid with proper equidistant spacing for perfect 120° angles
+			const hexHeight = gridSize * Math.sqrt(3) / 2; // Correct vertical spacing
+			const hexWidth = gridSize; // Horizontal spacing between columns
 			
 			const firstRow = Math.floor(startY / hexHeight);
 			const lastRow = Math.ceil(endY / hexHeight);
@@ -151,7 +157,8 @@
 			
 			for (let row = firstRow; row <= lastRow; row++) {
 				for (let col = firstCol; col <= lastCol; col++) {
-					const offsetX = (row % 2) * (gridSize * 0.75);
+					// Offset every other row by half the horizontal spacing
+					const offsetX = (row % 2) * (hexWidth / 2);
 					const x = col * hexWidth + offsetX;
 					const y = row * hexHeight;
 					
@@ -177,12 +184,18 @@
 	}
 	
 	function handleSVGClick(event) {
-		if (isPanning) return;
+		if (isPanning || isBoxSelecting) return;
 		
 		const coords = getCanvasCoordinates(event);
 		
 		if (selectedTool === 'atom') {
 			addAtom(coords.x, coords.y);
+		} else if (selectedTool === 'select') {
+			// Clear selection if clicking on empty space and not holding shift
+			if (!event.shiftKey) {
+				selectedAtoms.clear();
+				selectedAtoms = new Set(selectedAtoms);
+			}
 		}
 	}
 	
@@ -195,12 +208,31 @@
 			selected: false
 		};
 		atoms = [...atoms, newAtom];
+		
+		// Update graph representation
+		moleculeGraph.nodes.set(newAtom.id, newAtom);
+		moleculeGraph.adjacency.set(newAtom.id, new Set());
 	}
 	
-	function selectAtom(atomId) {
+	function selectAtom(atomId, addToSelection = false) {
+		if (addToSelection) {
+			// Toggle selection for this atom
+			if (selectedAtoms.has(atomId)) {
+				selectedAtoms.delete(atomId);
+			} else {
+				selectedAtoms.add(atomId);
+			}
+		} else {
+			// Single selection - clear others and select this one
+			selectedAtoms.clear();
+			selectedAtoms.add(atomId);
+		}
+		selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
+		
+		// Update atom objects for visual feedback
 		atoms = atoms.map(atom => ({
 			...atom,
-			selected: atom.id === atomId
+			selected: selectedAtoms.has(atom.id)
 		}));
 	}
 	
@@ -224,6 +256,17 @@
 				type: 'single'
 			};
 			bonds = [...bonds, newBond];
+			
+			// Update graph representation
+			moleculeGraph.edges.set(newBond.id, newBond);
+			if (!moleculeGraph.adjacency.has(newBond.atomId1)) {
+				moleculeGraph.adjacency.set(newBond.atomId1, new Set());
+			}
+			if (!moleculeGraph.adjacency.has(newBond.atomId2)) {
+				moleculeGraph.adjacency.set(newBond.atomId2, new Set());
+			}
+			moleculeGraph.adjacency.get(newBond.atomId1).add(newBond.atomId2);
+			moleculeGraph.adjacency.get(newBond.atomId2).add(newBond.atomId1);
 		}
 		tempBond = null;
 	}
@@ -279,14 +322,39 @@
 	}
 	
 	function deleteSelected() {
-		const selectedAtoms = atoms.filter(atom => atom.selected);
-		if (selectedAtoms.length > 0) {
-			const selectedAtomIds = selectedAtoms.map(atom => atom.id);
-			atoms = atoms.filter(atom => !atom.selected);
-			bonds = bonds.filter(bond => 
-				!selectedAtomIds.includes(bond.atomId1) && 
-				!selectedAtomIds.includes(bond.atomId2)
+		if (selectedAtoms.size > 0) {
+			const atomIdsToDelete = Array.from(selectedAtoms);
+			
+			// Remove atoms
+			atoms = atoms.filter(atom => !selectedAtoms.has(atom.id));
+			
+			// Remove bonds connected to deleted atoms
+			const bondsToDelete = bonds.filter(bond => 
+				selectedAtoms.has(bond.atomId1) || selectedAtoms.has(bond.atomId2)
 			);
+			bonds = bonds.filter(bond => 
+				!selectedAtoms.has(bond.atomId1) && !selectedAtoms.has(bond.atomId2)
+			);
+			
+			// Update graph representation
+			atomIdsToDelete.forEach(atomId => {
+				moleculeGraph.nodes.delete(atomId);
+				moleculeGraph.adjacency.delete(atomId);
+			});
+			
+			bondsToDelete.forEach(bond => {
+				moleculeGraph.edges.delete(bond.id);
+				// Remove from adjacency lists
+				if (moleculeGraph.adjacency.has(bond.atomId1)) {
+					moleculeGraph.adjacency.get(bond.atomId1).delete(bond.atomId2);
+				}
+				if (moleculeGraph.adjacency.has(bond.atomId2)) {
+					moleculeGraph.adjacency.get(bond.atomId2).delete(bond.atomId1);
+				}
+			});
+			
+			selectedAtoms.clear();
+			selectedAtoms = new Set(selectedAtoms);
 		}
 	}
 	
@@ -501,7 +569,6 @@
 						bind:group={gridType} 
 						value="square"
 						disabled={!gridEnabled}
-						on:change={() => updateViewBox()}
 					/>
 					Square Grid
 				</label>
@@ -511,7 +578,6 @@
 						bind:group={gridType} 
 						value="hexagonal"
 						disabled={!gridEnabled}
-						on:change={() => updateViewBox()}
 					/>
 					Hexagonal Grid
 				</label>
@@ -594,7 +660,7 @@
 		>
 			<!-- Grid Points -->
 			{#if gridEnabled}
-				{#each generateGridPoints() as point}
+				{#each gridPoints as point}
 					<circle 
 						cx={point.x} 
 						cy={point.y} 
