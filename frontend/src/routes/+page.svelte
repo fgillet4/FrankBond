@@ -3,6 +3,7 @@
 	
 	let atoms = [];
 	let bonds = [];
+	let arrows = [];
 	
 	// Graph representation of the molecule
 	let moleculeGraph = {
@@ -14,6 +15,7 @@
 	let selectedElement = 'C';
 	let selectedTool = 'atom';
 	let tempBond = null;
+	let tempArrow = null;
 	let svgElement;
 	
 	// Selection state
@@ -176,6 +178,11 @@
 		if (!isPanning) {
 			const coords = getCanvasCoordinates(event);
 			debugCursor = { x: coords.x, y: coords.y, visible: true };
+			
+			// Update temp arrow if drawing
+			if (tempArrow && selectedTool === 'arrow') {
+				updateArrow(coords.x, coords.y);
+			}
 		}
 	}
 	
@@ -197,6 +204,12 @@
 		
 		if (selectedTool === 'atom') {
 			addAtom(coords.x, coords.y);
+		} else if (selectedTool === 'arrow') {
+			if (tempArrow) {
+				completeArrow();
+			} else {
+				startArrow(coords.x, coords.y);
+			}
 		} else if (selectedTool === 'select') {
 			// Clear selection if clicking on empty space and not holding shift
 			if (!event.shiftKey) {
@@ -284,6 +297,36 @@
 			moleculeGraph.adjacency.get(newBond.atomId2).add(newBond.atomId1);
 		}
 		tempBond = null;
+	}
+	
+	function startArrow(x, y) {
+		if (!tempArrow) {
+			tempArrow = { startX: x, startY: y, endX: x, endY: y };
+			console.log('Started arrow at:', x, y);
+		}
+	}
+	
+	function updateArrow(x, y) {
+		if (tempArrow) {
+			tempArrow.endX = x;
+			tempArrow.endY = y;
+		}
+	}
+	
+	function completeArrow() {
+		if (tempArrow) {
+			const newArrow = {
+				id: generateId(),
+				startX: tempArrow.startX,
+				startY: tempArrow.startY,
+				endX: tempArrow.endX,
+				endY: tempArrow.endY,
+				type: 'reaction'
+			};
+			arrows = [...arrows, newArrow];
+			console.log('Completed arrow:', newArrow);
+			tempArrow = null;
+		}
 	}
 	
 	function getAtomColor(element) {
@@ -602,6 +645,12 @@
 			>
 				Draw Bond
 			</button>
+			<button 
+				class="tool-btn {selectedTool === 'arrow' ? 'active' : ''}"
+				on:click={() => selectedTool = 'arrow'}
+			>
+				Reaction Arrow
+			</button>
 		</div>
 		
 		<div class="tool-group">
@@ -694,7 +743,7 @@
 			<button class="action-btn" on:click={deleteSelected}>
 				Delete Selected
 			</button>
-			<button class="action-btn" on:click={() => { atoms = []; bonds = []; }}>
+			<button class="action-btn" on:click={() => { atoms = []; bonds = []; arrows = []; selectedAtoms.clear(); selectedAtoms = new Set(); }}>
 				Clear All
 			</button>
 		</div>
@@ -770,6 +819,63 @@
 					stroke-width="2"
 					stroke-dasharray="5,5"
 					fill="none"
+				/>
+			{/if}
+			
+			<!-- Arrows -->
+			{#each arrows as arrow}
+				<defs>
+					<marker 
+						id="arrowhead-{arrow.id}" 
+						markerWidth="10" 
+						markerHeight="7" 
+						refX="9" 
+						refY="3.5" 
+						orient="auto"
+					>
+						<polygon 
+							points="0 0, 10 3.5, 0 7" 
+							fill="#000000" 
+						/>
+					</marker>
+				</defs>
+				<line 
+					x1={arrow.startX} 
+					y1={arrow.startY} 
+					x2={arrow.endX} 
+					y2={arrow.endY}
+					stroke="#000000"
+					stroke-width="3"
+					marker-end="url(#arrowhead-{arrow.id})"
+				/>
+			{/each}
+			
+			<!-- Temporary arrow while drawing -->
+			{#if tempArrow}
+				<defs>
+					<marker 
+						id="temp-arrowhead" 
+						markerWidth="10" 
+						markerHeight="7" 
+						refX="9" 
+						refY="3.5" 
+						orient="auto"
+					>
+						<polygon 
+							points="0 0, 10 3.5, 0 7" 
+							fill="#999999" 
+						/>
+					</marker>
+				</defs>
+				<line 
+					x1={tempArrow.startX} 
+					y1={tempArrow.startY} 
+					x2={tempArrow.endX} 
+					y2={tempArrow.endY}
+					stroke="#999999"
+					stroke-width="3"
+					stroke-dasharray="5,5"
+					marker-end="url(#temp-arrowhead)"
 				/>
 			{/if}
 			
