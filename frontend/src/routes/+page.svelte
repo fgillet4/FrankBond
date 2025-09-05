@@ -4,6 +4,7 @@
 	let atoms = [];
 	let bonds = [];
 	let arrows = [];
+	let lonePairs = [];
 	
 	// Graph representation of the molecule
 	let moleculeGraph = {
@@ -20,6 +21,10 @@
 	
 	// Selection state
 	let selectedAtoms = new Set();
+	let selectedArrows = new Set();
+	
+	// Context menu state
+	let contextMenu = { visible: false, x: 0, y: 0 };
 	let isBoxSelecting = false;
 	let boxStart = { x: 0, y: 0 };
 	let boxEnd = { x: 0, y: 0 };
@@ -30,6 +35,11 @@
 	let isPanning = false;
 	let lastPanPoint = { x: 0, y: 0 };
 	let viewBox = { x: 0, y: 0, width: 800, height: 600 };
+	
+	// Drag state
+	let isDragging = false;
+	let draggedAtomId = null;
+	let dragOffset = { x: 0, y: 0 };
 	
 	// Grid system
 	let gridEnabled = true;
@@ -215,7 +225,9 @@
 			if (!event.shiftKey) {
 				console.log('Clearing selection (clicked empty space)');
 				selectedAtoms.clear();
+				selectedArrows.clear();
 				selectedAtoms = new Set(selectedAtoms);
+				selectedArrows = new Set(selectedArrows);
 				// Update atom objects for visual feedback
 				atoms = atoms.map(atom => ({
 					...atom,
@@ -329,6 +341,70 @@
 		}
 	}
 	
+	function addLonePair(atomId, angle) {
+		const newLonePair = {
+			id: generateId(),
+			atomId: atomId,
+			angle: angle // angle in radians for positioning around atom
+		};
+		lonePairs = [...lonePairs, newLonePair];
+		console.log('Added lone pair to atom:', atomId, 'at angle:', angle);
+	}
+	
+	function getLonePairPosition(atomId, angle) {
+		const atom = atoms.find(a => a.id === atomId);
+		if (!atom) return { x: 0, y: 0 };
+		
+		const distance = 25; // Distance from atom center
+		return {
+			x: atom.x + Math.cos(angle) * distance,
+			y: atom.y + Math.sin(angle) * distance
+		};
+	}
+	
+	function startAtomDrag(atomId, event) {
+		if (selectedTool === 'select' && selectedAtoms.has(atomId)) {
+			event.stopPropagation();
+			isDragging = true;
+			draggedAtomId = atomId;
+			
+			const atom = atoms.find(a => a.id === atomId);
+			const coords = getCanvasCoordinates(event);
+			dragOffset = {
+				x: coords.x - atom.x,
+				y: coords.y - atom.y
+			};
+			console.log('Started dragging atom:', atomId);
+		}
+	}
+	
+	function updateAtomPosition(atomId, newX, newY) {
+		// Update atom position
+		atoms = atoms.map(atom => 
+			atom.id === atomId ? { ...atom, x: newX, y: newY } : atom
+		);
+		
+		// Update graph representation
+		const atom = moleculeGraph.nodes.get(atomId);
+		if (atom) {
+			moleculeGraph.nodes.set(atomId, { ...atom, x: newX, y: newY });
+		}
+		
+		// Force bonds to re-render by triggering reactivity
+		bonds = [...bonds];
+	}
+	
+	function isArrowInBox(arrow, minX, maxX, minY, maxY) {
+		// Check if arrow line intersects with or is contained in the selection box
+		const startInBox = arrow.startX >= minX && arrow.startX <= maxX && 
+		                   arrow.startY >= minY && arrow.startY <= maxY;
+		const endInBox = arrow.endX >= minX && arrow.endX <= maxX && 
+		                 arrow.endY >= minY && arrow.endY <= maxY;
+		
+		// Arrow is selected if either endpoint is in the box, or if line crosses the box
+		return startInBox || endInBox;
+	}
+	
 	function getAtomColor(element) {
 		const colors = {
 			'C': '#000000',
@@ -380,8 +456,8 @@
 	}
 	
 	function deleteSelected() {
-		console.log('Delete called, selected atoms:', selectedAtoms.size, Array.from(selectedAtoms));
-		if (selectedAtoms.size > 0) {
+		console.log('Delete called, selected atoms:', selectedAtoms.size, 'arrows:', selectedArrows.size);
+		if (selectedAtoms.size > 0 || selectedArrows.size > 0) {
 			const atomIdsToDelete = Array.from(selectedAtoms);
 			
 			// Remove atoms
@@ -394,6 +470,12 @@
 			bonds = bonds.filter(bond => 
 				!selectedAtoms.has(bond.atomId1) && !selectedAtoms.has(bond.atomId2)
 			);
+			
+			// Remove lone pairs connected to deleted atoms
+			lonePairs = lonePairs.filter(lp => !selectedAtoms.has(lp.atomId));
+			
+			// Remove selected arrows
+			arrows = arrows.filter(arrow => !selectedArrows.has(arrow.id));
 			
 			// Update graph representation
 			atomIdsToDelete.forEach(atomId => {
@@ -413,14 +495,54 @@
 			});
 			
 			selectedAtoms.clear();
+			selectedArrows.clear();
 			selectedAtoms = new Set(selectedAtoms);
+			selectedArrows = new Set(selectedArrows);
 		}
+	}
+	
+	function selectAll() {
+		// Select all atoms and arrows
+		selectedAtoms.clear();
+		selectedArrows.clear();
+		
+		atoms.forEach(atom => selectedAtoms.add(atom.id));
+		arrows.forEach(arrow => selectedArrows.add(arrow.id));
+		
+		selectedAtoms = new Set(selectedAtoms);
+		selectedArrows = new Set(selectedArrows);
+		
+		// Update atom visual feedback
+		atoms = atoms.map(atom => ({
+			...atom,
+			selected: true
+		}));
+		
+		console.log('Selected all - atoms:', selectedAtoms.size, 'arrows:', selectedArrows.size);
 	}
 	
 	function handleKeyDown(event) {
 		if (event.key === 'Delete' || event.key === 'Backspace') {
 			deleteSelected();
+		} else if ((event.metaKey || event.ctrlKey) && event.key === 'a') {
+			event.preventDefault();
+			selectAll();
 		}
+	}
+	
+	function handleContextMenu(event) {
+		event.preventDefault(); // Disable browser context menu
+		
+		// Get screen coordinates for context menu positioning
+		contextMenu = {
+			visible: true,
+			x: event.clientX,
+			y: event.clientY
+		};
+	}
+	
+	function hideContextMenu() {
+		contextMenu.visible = false;
 	}
 	
 	// Pan and zoom handlers
@@ -454,6 +576,21 @@
 			
 			lastPanPoint = { x: event.clientX, y: event.clientY };
 			updateViewBox();
+		} else if (isDragging && draggedAtomId) {
+			// Update atom position while dragging
+			event.preventDefault();
+			const coords = getCanvasCoordinates(event);
+			let newX = coords.x - dragOffset.x;
+			let newY = coords.y - dragOffset.y;
+			
+			// Snap to grid if enabled
+			if (snapToGrid && gridEnabled) {
+				const snapped = snapToGridPoint(newX, newY);
+				newX = snapped.x;
+				newY = snapped.y;
+			}
+			
+			updateAtomPosition(draggedAtomId, newX, newY);
 		} else if (isBoxSelecting) {
 			// Update box selection
 			event.preventDefault();
@@ -466,6 +603,10 @@
 		if (isPanning) {
 			isPanning = false;
 			svgElement.style.cursor = 'default';
+		} else if (isDragging) {
+			isDragging = false;
+			draggedAtomId = null;
+			console.log('Stopped dragging atom');
 		} else if (isBoxSelecting) {
 			// Complete box selection
 			isBoxSelecting = false;
@@ -482,17 +623,24 @@
 				atom.y >= minY && atom.y <= maxY
 			);
 			
-			console.log('Box selection complete. Found atoms:', selectedInBox.length, selectedInBox.map(a => a.id));
+			const arrowsInBox = arrows.filter(arrow => 
+				isArrowInBox(arrow, minX, maxX, minY, maxY)
+			);
+			
+			console.log('Box selection complete. Found atoms:', selectedInBox.length, 'arrows:', arrowsInBox.length);
 			
 			// Add to selection (or replace if not holding shift)
 			if (!event.shiftKey) {
 				selectedAtoms.clear();
+				selectedArrows.clear();
 			}
 			
 			selectedInBox.forEach(atom => selectedAtoms.add(atom.id));
+			arrowsInBox.forEach(arrow => selectedArrows.add(arrow.id));
 			selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
+			selectedArrows = new Set(selectedArrows); // Trigger reactivity
 			
-			console.log('Total selected atoms after box select:', Array.from(selectedAtoms));
+			console.log('Total selected - atoms:', Array.from(selectedAtoms), 'arrows:', Array.from(selectedArrows));
 			
 			// Update atom objects for visual feedback
 			atoms = atoms.map(atom => ({
@@ -613,8 +761,10 @@
 	
 	onMount(() => {
 		document.addEventListener('keydown', handleKeyDown);
+		document.addEventListener('click', hideContextMenu);
 		return () => {
 			document.removeEventListener('keydown', handleKeyDown);
+			document.removeEventListener('click', hideContextMenu);
 		};
 	});
 </script>
@@ -650,6 +800,12 @@
 				on:click={() => selectedTool = 'arrow'}
 			>
 				Reaction Arrow
+			</button>
+			<button 
+				class="tool-btn {selectedTool === 'lonepair' ? 'active' : ''}"
+				on:click={() => selectedTool = 'lonepair'}
+			>
+				Lone Pair
 			</button>
 		</div>
 		
@@ -743,7 +899,7 @@
 			<button class="action-btn" on:click={deleteSelected}>
 				Delete Selected
 			</button>
-			<button class="action-btn" on:click={() => { atoms = []; bonds = []; arrows = []; selectedAtoms.clear(); selectedAtoms = new Set(); }}>
+			<button class="action-btn" on:click={() => { atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedAtoms = new Set(); }}>
 				Clear All
 			</button>
 		</div>
@@ -765,12 +921,13 @@
 			height="100%" 
 			viewBox="{viewBox.x} {viewBox.y} {viewBox.width} {viewBox.height}"
 			preserveAspectRatio="xMidYMid meet"
-			on:click={handleSVGClick}
+			on:click={(e) => { handleSVGClick(e); hideContextMenu(); }}
 			on:mousedown={handleMouseDown}
 			on:mousemove={(e) => { handleMouseMove(e); handleSVGMouseMove(e); }}
 			on:mouseleave={handleSVGMouseLeave}
 			on:mouseup={handleMouseUp}
 			on:wheel={handleWheel}
+			on:contextmenu={handleContextMenu}
 			on:touchstart={handleTouchStart}
 			on:touchmove={handleTouchMove}
 			on:touchend={handleTouchEnd}
@@ -844,9 +1001,28 @@
 					y1={arrow.startY} 
 					x2={arrow.endX} 
 					y2={arrow.endY}
-					stroke="#000000"
-					stroke-width="3"
+					stroke={selectedArrows.has(arrow.id) ? "#0066cc" : "#000000"}
+					stroke-width={selectedArrows.has(arrow.id) ? "4" : "3"}
 					marker-end="url(#arrowhead-{arrow.id})"
+					style="cursor: pointer;"
+					on:click={(e) => {
+						if (selectedTool === 'select') {
+							e.stopPropagation();
+							if (e.shiftKey) {
+								// Toggle arrow selection
+								if (selectedArrows.has(arrow.id)) {
+									selectedArrows.delete(arrow.id);
+								} else {
+									selectedArrows.add(arrow.id);
+								}
+							} else {
+								// Single selection
+								selectedArrows.clear();
+								selectedArrows.add(arrow.id);
+							}
+							selectedArrows = new Set(selectedArrows);
+						}
+					}}
 				/>
 			{/each}
 			
@@ -889,8 +1065,14 @@
 						fill={getAtomColor(atom.element)}
 						stroke={atom.selected ? "#0066cc" : "#000000"}
 						stroke-width={atom.selected ? "3" : "1"}
-						on:click={(e) => {
+						on:mousedown={(e) => {
 							if (isPanning) return;
+							if (selectedTool === 'select' && selectedAtoms.has(atom.id)) {
+								startAtomDrag(atom.id, e);
+							}
+						}}
+						on:click={(e) => {
+							if (isPanning || isDragging) return;
 							e.stopPropagation();
 							if (selectedTool === 'bond') {
 								if (tempBond) {
@@ -900,9 +1082,14 @@
 								}
 							} else if (selectedTool === 'select') {
 								selectAtom(atom.id, e.shiftKey);
+							} else if (selectedTool === 'lonepair') {
+								// Add lone pair at a smart angle
+								const existingPairs = lonePairs.filter(lp => lp.atomId === atom.id);
+								const angle = existingPairs.length * (Math.PI / 2); // 90° increments
+								addLonePair(atom.id, angle);
 							}
 						}}
-						style="cursor: pointer;"
+						style="cursor: {selectedTool === 'select' && selectedAtoms.has(atom.id) ? 'grab' : 'pointer'};"
 					/>
 					<text 
 						x={atom.x} 
@@ -916,6 +1103,26 @@
 					>
 						{atom.element}
 					</text>
+				</g>
+			{/each}
+			
+			<!-- Lone Pairs -->
+			{#each lonePairs as lonePair}
+				{@const position = getLonePairPosition(lonePair.atomId, lonePair.angle)}
+				<g>
+					<!-- Two dots for lone pair -->
+					<circle 
+						cx={position.x - 3} 
+						cy={position.y} 
+						r="2"
+						fill="#000000"
+					/>
+					<circle 
+						cx={position.x + 3} 
+						cy={position.y} 
+						r="2"
+						fill="#000000"
+					/>
 				</g>
 			{/each}
 			
@@ -967,11 +1174,35 @@
 	</div>
 </div>
 
+<!-- Custom Context Menu -->
+{#if contextMenu.visible}
+	<div 
+		class="context-menu"
+		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+		on:click|stopPropagation
+	>
+		<div class="context-item" on:click={() => { selectAll(); hideContextMenu(); }}>
+			Select All (Cmd+A)
+		</div>
+		<div class="context-item" on:click={() => { deleteSelected(); hideContextMenu(); }}>
+			Delete Selected
+		</div>
+		<hr class="context-divider">
+		<div class="context-item" on:click={() => { atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); hideContextMenu(); }}>
+			Clear All
+		</div>
+	</div>
+{/if}
+
 <style>
 	.app {
 		display: flex;
 		height: 100vh;
 		font-family: Arial, sans-serif;
+		user-select: none; /* Prevent text selection */
+		-webkit-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
 	}
 	
 	.toolbar {
@@ -1130,5 +1361,34 @@
 	input:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	
+	/* Context Menu */
+	.context-menu {
+		position: fixed;
+		background: white;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+		z-index: 1000;
+		min-width: 150px;
+		padding: 4px 0;
+	}
+	
+	.context-item {
+		padding: 8px 16px;
+		cursor: pointer;
+		font-size: 14px;
+		color: #333;
+	}
+	
+	.context-item:hover {
+		background-color: #f5f5f5;
+	}
+	
+	.context-divider {
+		border: none;
+		border-top: 1px solid #eee;
+		margin: 4px 0;
 	}
 </style>
