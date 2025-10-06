@@ -23,9 +23,16 @@
 	let selectedAtoms = new Set();
 	let selectedArrows = new Set();
 	let selectedBonds = new Set();
+	let selectedLonePairs = new Set();
 	
 	// Context menu state
 	let contextMenu = { visible: false, x: 0, y: 0 };
+	
+	// Educational modal state
+	let showEducationalModal = false;
+	
+	// File input for loading molecules
+	let fileInput;
 	
 	// Undo/Redo state management (double stack)
 	let undoStack = [];
@@ -233,9 +240,11 @@
 				selectedAtoms.clear();
 				selectedArrows.clear();
 				selectedBonds.clear();
+				selectedLonePairs.clear();
 				selectedAtoms = new Set(selectedAtoms);
 				selectedArrows = new Set(selectedArrows);
 				selectedBonds = new Set(selectedBonds);
+				selectedLonePairs = new Set(selectedLonePairs);
 				// Update atom objects for visual feedback
 				atoms = atoms.map(atom => ({
 					...atom,
@@ -386,7 +395,8 @@
 			lonePairs: JSON.parse(JSON.stringify(lonePairs)),
 			selectedAtoms: new Set(selectedAtoms),
 			selectedArrows: new Set(selectedArrows),
-			selectedBonds: new Set(selectedBonds)
+			selectedBonds: new Set(selectedBonds),
+			selectedLonePairs: new Set(selectedLonePairs)
 		};
 		
 		undoStack.push(state);
@@ -408,6 +418,7 @@
 		selectedAtoms = new Set(state.selectedAtoms);
 		selectedArrows = new Set(state.selectedArrows);
 		selectedBonds = new Set(state.selectedBonds);
+		selectedLonePairs = new Set(state.selectedLonePairs);
 		
 		// Rebuild graph representation
 		moleculeGraph.nodes.clear();
@@ -438,7 +449,8 @@
 				lonePairs: JSON.parse(JSON.stringify(lonePairs)),
 				selectedAtoms: new Set(selectedAtoms),
 				selectedArrows: new Set(selectedArrows),
-				selectedBonds: new Set(selectedBonds)
+				selectedBonds: new Set(selectedBonds),
+				selectedLonePairs: new Set(selectedLonePairs)
 			};
 			redoStack.push(currentState);
 			
@@ -513,6 +525,12 @@
 		return startInBox || endInBox;
 	}
 	
+	function isLonePairInBox(lonePair, minX, maxX, minY, maxY) {
+		const position = getLonePairPosition(lonePair.atomId, lonePair.angle);
+		return position.x >= minX && position.x <= maxX && 
+		       position.y >= minY && position.y <= maxY;
+	}
+	
 	function isArrowInBox(arrow, minX, maxX, minY, maxY) {
 		// Check if arrow line intersects with or is contained in the selection box
 		const startInBox = arrow.startX >= minX && arrow.startX <= maxX && 
@@ -575,8 +593,8 @@
 	}
 	
 	function deleteSelected() {
-		console.log('Delete called, selected atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size);
-		if (selectedAtoms.size > 0 || selectedArrows.size > 0 || selectedBonds.size > 0) {
+		console.log('Delete called, selected atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size, 'lone pairs:', selectedLonePairs.size);
+		if (selectedAtoms.size > 0 || selectedArrows.size > 0 || selectedBonds.size > 0 || selectedLonePairs.size > 0) {
 			saveState(); // Save state before making changes
 			
 			const atomIdsToDelete = Array.from(selectedAtoms);
@@ -597,6 +615,9 @@
 			
 			// Remove selected arrows
 			arrows = arrows.filter(arrow => !selectedArrows.has(arrow.id));
+			
+			// Remove selected lone pairs (independent of atom deletion)
+			lonePairs = lonePairs.filter(lp => !selectedLonePairs.has(lp.id));
 			
 			// Remove selected bonds (independent of atom deletion)
 			const selectedBondsToDelete = bonds.filter(bond => selectedBonds.has(bond.id));
@@ -633,25 +654,30 @@
 			selectedAtoms.clear();
 			selectedArrows.clear();
 			selectedBonds.clear();
+			selectedLonePairs.clear();
 			selectedAtoms = new Set(selectedAtoms);
 			selectedArrows = new Set(selectedArrows);
 			selectedBonds = new Set(selectedBonds);
+			selectedLonePairs = new Set(selectedLonePairs);
 		}
 	}
 	
 	function selectAll() {
-		// Select all atoms, bonds, and arrows
+		// Select all atoms, bonds, arrows, and lone pairs
 		selectedAtoms.clear();
 		selectedArrows.clear();
 		selectedBonds.clear();
+		selectedLonePairs.clear();
 		
 		atoms.forEach(atom => selectedAtoms.add(atom.id));
 		arrows.forEach(arrow => selectedArrows.add(arrow.id));
 		bonds.forEach(bond => selectedBonds.add(bond.id));
+		lonePairs.forEach(lp => selectedLonePairs.add(lp.id));
 		
 		selectedAtoms = new Set(selectedAtoms);
 		selectedArrows = new Set(selectedArrows);
 		selectedBonds = new Set(selectedBonds);
+		selectedLonePairs = new Set(selectedLonePairs);
 		
 		// Update atom visual feedback
 		atoms = atoms.map(atom => ({
@@ -659,7 +685,7 @@
 			selected: true
 		}));
 		
-		console.log('Selected all - atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size);
+		console.log('Selected all - atoms:', selectedAtoms.size, 'bonds:', selectedBonds.size, 'arrows:', selectedArrows.size, 'lone pairs:', selectedLonePairs.size);
 	}
 	
 	function handleKeyDown(event) {
@@ -779,23 +805,30 @@
 				isBondInBox(bond, minX, maxX, minY, maxY)
 			);
 			
-			console.log('Box selection complete. Found atoms:', selectedInBox.length, 'arrows:', arrowsInBox.length, 'bonds:', bondsInBox.length);
+			const lonePairsInBox = lonePairs.filter(lonePair => 
+				isLonePairInBox(lonePair, minX, maxX, minY, maxY)
+			);
+			
+			console.log('Box selection complete. Found atoms:', selectedInBox.length, 'arrows:', arrowsInBox.length, 'bonds:', bondsInBox.length, 'lone pairs:', lonePairsInBox.length);
 			
 			// Add to selection (or replace if not holding shift)
 			if (!event.shiftKey) {
 				selectedAtoms.clear();
 				selectedArrows.clear();
 				selectedBonds.clear();
+				selectedLonePairs.clear();
 			}
 			
 			selectedInBox.forEach(atom => selectedAtoms.add(atom.id));
 			arrowsInBox.forEach(arrow => selectedArrows.add(arrow.id));
 			bondsInBox.forEach(bond => selectedBonds.add(bond.id));
+			lonePairsInBox.forEach(lonePair => selectedLonePairs.add(lonePair.id));
 			selectedAtoms = new Set(selectedAtoms); // Trigger reactivity
 			selectedArrows = new Set(selectedArrows); // Trigger reactivity
 			selectedBonds = new Set(selectedBonds); // Trigger reactivity
+			selectedLonePairs = new Set(selectedLonePairs); // Trigger reactivity
 			
-			console.log('Total selected - atoms:', Array.from(selectedAtoms), 'arrows:', Array.from(selectedArrows), 'bonds:', Array.from(selectedBonds));
+			console.log('Total selected - atoms:', Array.from(selectedAtoms), 'arrows:', Array.from(selectedArrows), 'bonds:', Array.from(selectedBonds), 'lone pairs:', Array.from(selectedLonePairs));
 			
 			// Update atom objects for visual feedback
 			atoms = atoms.map(atom => ({
@@ -1060,8 +1093,15 @@
 			<button class="action-btn" on:click={deleteSelected}>
 				Delete Selected
 			</button>
-			<button class="action-btn" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); selectedAtoms = new Set(); selectedArrows = new Set(); selectedBonds = new Set(); }}>
+			<button class="action-btn" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); selectedLonePairs.clear(); selectedAtoms = new Set(); selectedArrows = new Set(); selectedBonds = new Set(); selectedLonePairs = new Set(); }}>
 				Clear All
+			</button>
+		</div>
+		
+		<div class="tool-group">
+			<h3>Education</h3>
+			<button class="tool-btn" on:click={() => showEducationalModal = true}>
+				Chemistry Guide
 			</button>
 		</div>
 		
@@ -1286,19 +1326,43 @@
 			<!-- Lone Pairs -->
 			{#each lonePairs as lonePair}
 				{@const position = getLonePairPosition(lonePair.atomId, lonePair.angle)}
-				<g>
+				<g 
+					on:click={(e) => {
+						if (selectedTool === 'select') {
+							e.stopPropagation();
+							if (e.shiftKey) {
+								// Toggle lone pair selection
+								if (selectedLonePairs.has(lonePair.id)) {
+									selectedLonePairs.delete(lonePair.id);
+								} else {
+									selectedLonePairs.add(lonePair.id);
+								}
+							} else {
+								// Single selection
+								selectedLonePairs.clear();
+								selectedLonePairs.add(lonePair.id);
+							}
+							selectedLonePairs = new Set(selectedLonePairs);
+						}
+					}}
+					style="cursor: pointer;"
+				>
 					<!-- Two dots for lone pair -->
 					<circle 
 						cx={position.x - 3} 
 						cy={position.y} 
 						r="2"
-						fill="#000000"
+						fill={selectedLonePairs.has(lonePair.id) ? "#0066cc" : "#000000"}
+						stroke={selectedLonePairs.has(lonePair.id) ? "#ffffff" : "none"}
+						stroke-width={selectedLonePairs.has(lonePair.id) ? "1" : "0"}
 					/>
 					<circle 
 						cx={position.x + 3} 
 						cy={position.y} 
 						r="2"
-						fill="#000000"
+						fill={selectedLonePairs.has(lonePair.id) ? "#0066cc" : "#000000"}
+						stroke={selectedLonePairs.has(lonePair.id) ? "#ffffff" : "none"}
+						stroke-width={selectedLonePairs.has(lonePair.id) ? "1" : "0"}
 					/>
 				</g>
 			{/each}
@@ -1372,8 +1436,314 @@
 			Delete Selected
 		</div>
 		<hr class="context-divider">
-		<div class="context-item" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); hideContextMenu(); }}>
+		<div class="context-item" on:click={() => { saveState(); atoms = []; bonds = []; arrows = []; lonePairs = []; selectedAtoms.clear(); selectedArrows.clear(); selectedBonds.clear(); selectedLonePairs.clear(); hideContextMenu(); }}>
 			Clear All
+		</div>
+	</div>
+{/if}
+
+<!-- Educational Modal -->
+{#if showEducationalModal}
+	<div class="modal-overlay" on:click={() => showEducationalModal = false}>
+		<div class="modal-content" on:click|stopPropagation>
+			<div class="modal-header">
+				<h2>Organic Chemistry Guide</h2>
+				<button class="close-btn" on:click={() => showEducationalModal = false}>×</button>
+			</div>
+			
+			<div class="modal-body">
+				<div class="info-section">
+					<h3>🏗️ Structure & Bonding Fundamentals</h3>
+					<div class="structure-grid">
+						<div class="structure-item">
+							<strong>Lewis Structures:</strong> Show all valence electrons, lone pairs, and formal charges
+						</div>
+						<div class="structure-item">
+							<strong>Resonance:</strong> Multiple valid electron arrangements (benzene, enolates, carbocations)
+						</div>
+						<div class="structure-item">
+							<strong>Hybridization:</strong> sp³ (tetrahedral), sp² (trigonal), sp (linear)
+						</div>
+						<div class="structure-item">
+							<strong>VSEPR:</strong> Electron pair repulsion determines molecular geometry
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🔬 Periodic Table Trends</h3>
+					<div class="trend-grid">
+						<div class="trend-item">
+							<strong>Electronegativity:</strong> F &gt; O &gt; N &gt; Cl &gt; Br &gt; I &gt; S &gt; C &gt; H<br>
+							<em>Higher electronegativity = stronger electron pull</em>
+						</div>
+						<div class="trend-item">
+							<strong>Atomic Size:</strong> H &lt; C &lt; N &lt; O &lt; F (across period)<br>
+							<em>Smaller atoms = stronger bonds, higher electronegativity</em>
+						</div>
+						<div class="trend-item">
+							<strong>Bond Strength:</strong> C-F &gt; C-O &gt; C-N &gt; C-C &gt; C-H<br>
+							<em>Electronegativity difference affects bond polarity</em>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🌊 Electron Distribution & Orbitals</h3>
+					<div class="orbital-grid">
+						<div class="orbital-item">
+							<strong>HOMO (Highest Occupied):</strong> Where electrons come from → nucleophile behavior
+						</div>
+						<div class="orbital-item">
+							<strong>LUMO (Lowest Unoccupied):</strong> Where electrons go → electrophile behavior
+						</div>
+						<div class="orbital-item">
+							<strong>Energy Gap:</strong> Small HOMO-LUMO gap = more reactive molecule
+						</div>
+						<div class="orbital-item">
+							<strong>Charge Density:</strong> δ+ and δ− regions predict reaction sites
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>⚡ Energy Considerations</h3>
+					<div class="energy-grid">
+						<div class="energy-item thermo">
+							<h4>Thermodynamics</h4>
+							<p><strong>ΔG &lt; 0:</strong> Favorable reaction</p>
+							<p><strong>Bond energies:</strong> Stronger bonds = more stable products</p>
+							<p><strong>Stability order:</strong> Aromatic &gt; conjugated &gt; isolated</p>
+						</div>
+						<div class="energy-item kinetic">
+							<h4>Kinetics</h4>
+							<p><strong>Activation energy:</strong> Height of energy barrier</p>
+							<p><strong>Transition state:</strong> Highest energy point in mechanism</p>
+							<p><strong>Rate-determining step:</strong> Slowest step controls overall rate</p>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>⚡ Electronegativity & Reactivity</h3>
+					<div class="reactivity-grid">
+						<div class="reaction-type">
+							<h4>Nucleophilic Attack</h4>
+							<p><strong>Target:</strong> Electron-deficient carbons (δ+)</p>
+							<p><strong>Attacker:</strong> Electron-rich species (lone pairs, π electrons)</p>
+							<p><strong>Examples:</strong> O⁻, N:, :OH⁻ attacking C=O, C-X</p>
+						</div>
+						<div class="reaction-type">
+							<h4>Electrophilic Attack</h4>
+							<p><strong>Target:</strong> Electron-rich sites (π bonds, lone pairs)</p>
+							<p><strong>Attacker:</strong> Electron-deficient species (H⁺, carbocations)</p>
+							<p><strong>Examples:</strong> H⁺ attacking C=C, aromatic rings</p>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🔗 Bond Polarity & Synthesis Predictions</h3>
+					<div class="polarity-grid">
+						<div class="polarity-item">
+							<strong>C-O Bonds:</strong> δ⁺C—δ⁻O<br>
+							<em>Carbon is electrophilic → nucleophilic attack site</em>
+						</div>
+						<div class="polarity-item">
+							<strong>C-N Bonds:</strong> δ⁺C—δ⁻N<br>
+							<em>Less polar than C-O, but still electrophilic carbon</em>
+						</div>
+						<div class="polarity-item">
+							<strong>C-X Bonds:</strong> δ⁺C—δ⁻X (X = F, Cl, Br, I)<br>
+							<em>Good leaving groups, SN1/SN2 reaction sites</em>
+						</div>
+						<div class="polarity-item">
+							<strong>C=O Double Bonds:</strong> δ⁺C=δ⁻O<br>
+							<em>Highly electrophilic carbon, nucleophilic addition reactions</em>
+						</div>
+					</div>
+					
+					<div class="prediction-box">
+						<h4>🎯 Synthesis Prediction Rules:</h4>
+						<ul>
+							<li><strong>Higher Δ(electronegativity) = more polar bond = more reactive</strong></li>
+							<li><strong>δ⁺ carbons:</strong> Predict nucleophilic attack (OH⁻, NH₃, R⁻)</li>
+							<li><strong>δ⁻ atoms:</strong> Potential leaving groups or proton abstractors</li>
+							<li><strong>Multiple bonds:</strong> Addition reactions likely (C=C, C=O, C≡N)</li>
+							<li><strong>Lone pairs:</strong> Nucleophilic centers for electrophilic attack</li>
+						</ul>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🎯 Synthesis Strategy</h3>
+					<div class="strategy-list">
+						<div class="strategy-item">
+							<strong>Identify Electrophiles:</strong> Look for C bonded to electronegative atoms (O, N, halogens)
+						</div>
+						<div class="strategy-item">
+							<strong>Identify Nucleophiles:</strong> Look for lone pairs, negative charges, π electrons
+						</div>
+						<div class="strategy-item">
+							<strong>Bond Polarity:</strong> δ+ carbons are reaction sites for nucleophiles
+						</div>
+						<div class="strategy-item">
+							<strong>Leaving Groups:</strong> Stable anions (halides, tosylate) facilitate reactions
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🔄 SN1 vs SN2 Mechanisms</h3>
+					<div class="mechanism-grid">
+						<div class="mechanism-item sn1">
+							<h4>SN1 (Substitution Nucleophilic Unimolecular)</h4>
+							<p><strong>Rate:</strong> Depends only on substrate [R-X]</p>
+							<p><strong>Mechanism:</strong> Two steps via carbocation intermediate</p>
+							<p><strong>Stereochemistry:</strong> Racemization (both R and S products)</p>
+							<p><strong>Substrate:</strong> 3° &gt; 2° &gt;&gt; 1° (carbocation stability)</p>
+							<p><strong>Nucleophile:</strong> Weak nucleophiles work fine</p>
+							<p><strong>Solvent:</strong> Polar protic (stabilizes carbocation)</p>
+						</div>
+						<div class="mechanism-item sn2">
+							<h4>SN2 (Substitution Nucleophilic Bimolecular)</h4>
+							<p><strong>Rate:</strong> Depends on both [R-X] and [Nu⁻]</p>
+							<p><strong>Mechanism:</strong> One step, backside attack</p>
+							<p><strong>Stereochemistry:</strong> Inversion of configuration</p>
+							<p><strong>Substrate:</strong> 1° &gt; 2° &gt;&gt; 3° (sterics matter)</p>
+							<p><strong>Nucleophile:</strong> Strong nucleophiles required</p>
+							<p><strong>Solvent:</strong> Polar aprotic (doesn't solvate nucleophile)</p>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🎯 Nucleophiles & Electrophiles</h3>
+					<div class="species-grid">
+						<div class="species-column">
+							<h4>Strong Nucleophiles</h4>
+							<div class="species-list">
+								<div class="species-item"><strong>OH⁻:</strong> Hydroxide ion</div>
+								<div class="species-item"><strong>RO⁻:</strong> Alkoxide ions</div>
+								<div class="species-item"><strong>NH₂⁻:</strong> Amide ion</div>
+								<div class="species-item"><strong>CN⁻:</strong> Cyanide ion</div>
+								<div class="species-item"><strong>I⁻:</strong> Iodide (polarizable)</div>
+							</div>
+							
+							<h4>Weak Nucleophiles</h4>
+							<div class="species-list">
+								<div class="species-item"><strong>H₂O:</strong> Water</div>
+								<div class="species-item"><strong>ROH:</strong> Alcohols</div>
+								<div class="species-item"><strong>NH₃:</strong> Ammonia</div>
+								<div class="species-item"><strong>F⁻:</strong> Fluoride (small, hard to polarize)</div>
+							</div>
+						</div>
+						
+						<div class="species-column">
+							<h4>Common Electrophiles</h4>
+							<div class="species-list">
+								<div class="species-item"><strong>R₃C⁺:</strong> Carbocations (3° &gt; 2° &gt; 1°)</div>
+								<div class="species-item"><strong>R-X:</strong> Alkyl halides</div>
+								<div class="species-item"><strong>H⁺:</strong> Protons (acids)</div>
+								<div class="species-item"><strong>C=O:</strong> Carbonyl carbons</div>
+								<div class="species-item"><strong>NO₂⁺:</strong> Nitronium ion</div>
+							</div>
+							
+							<h4>Good Leaving Groups</h4>
+							<div class="species-list">
+								<div class="species-item"><strong>I⁻ &gt; Br⁻ &gt; Cl⁻ &gt; F⁻:</strong> Halides</div>
+								<div class="species-item"><strong>TsO⁻:</strong> Tosylate</div>
+								<div class="species-item"><strong>H₂O:</strong> In acidic conditions</div>
+								<div class="species-item"><strong>N₂:</strong> From diazonium salts</div>
+							</div>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🧪 Acid/Base Effects on Reactions</h3>
+					<div class="reaction-conditions">
+						<div class="condition-item acidic">
+							<h4>Acidic Conditions (Low pH)</h4>
+							<ul>
+								<li><strong>Protonates nucleophiles:</strong> Makes them less reactive</li>
+								<li><strong>Creates better leaving groups:</strong> -OH₂⁺ instead of -OH</li>
+								<li><strong>Favors SN1:</strong> Stabilizes carbocation intermediates</li>
+								<li><strong>Examples:</strong> Alcohol substitution, ether formation</li>
+							</ul>
+						</div>
+						<div class="condition-item basic">
+							<h4>Basic Conditions (High pH)</h4>
+							<ul>
+								<li><strong>Deprotonates acids:</strong> Creates nucleophilic anions</li>
+								<li><strong>Enhances nucleophilicity:</strong> OH⁻ stronger than H₂O</li>
+								<li><strong>Favors SN2:</strong> Strong nucleophiles work better</li>
+								<li><strong>Examples:</strong> Williamson ether synthesis, saponification</li>
+							</ul>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🛡️ Stability Factors</h3>
+					<div class="stability-grid">
+						<div class="stability-item">
+							<strong>Resonance Stabilization:</strong> Delocalized electrons (benzene, enolates, carbocations)
+						</div>
+						<div class="stability-item">
+							<strong>Aromaticity:</strong> Hugely stabilizing, 4n+2 π electrons in ring
+						</div>
+						<div class="stability-item">
+							<strong>Inductive Effects:</strong> Electron-withdrawing (-NO₂, -CF₃) vs donating (-CH₃, -NH₂)
+						</div>
+						<div class="stability-item">
+							<strong>Hyperconjugation:</strong> σ-bond overlap stabilizes carbocations/radicals
+						</div>
+						<div class="stability-item">
+							<strong>Sterics:</strong> Bulky groups create strain, block reactions
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>🧪 Experimental Conditions</h3>
+					<div class="conditions-grid">
+						<div class="condition-factor">
+							<h4>Temperature Effects</h4>
+							<p><strong>Higher T:</strong> Favors entropy (more products), faster kinetics</p>
+							<p><strong>Lower T:</strong> Favors enthalpy (stronger bonds), selectivity</p>
+						</div>
+						<div class="condition-factor">
+							<h4>Solvent Effects</h4>
+							<p><strong>Polar protic:</strong> H-bonding, stabilizes anions (SN1 favored)</p>
+							<p><strong>Polar aprotic:</strong> No H-bonding, naked anions (SN2 favored)</p>
+							<p><strong>Nonpolar:</strong> Dissolves organics, radical reactions</p>
+						</div>
+						<div class="condition-factor">
+							<h4>Catalysts</h4>
+							<p><strong>Acid catalysis:</strong> Protonates leaving groups, activates carbonyls</p>
+							<p><strong>Base catalysis:</strong> Deprotonates, creates nucleophiles</p>
+							<p><strong>Lewis acids:</strong> Accept electron pairs (AlCl₃, BF₃)</p>
+						</div>
+						<div class="condition-factor">
+							<h4>Concentration</h4>
+							<p><strong>High [substrate]:</strong> Favors unimolecular (SN1, E1)</p>
+							<p><strong>High [nucleophile]:</strong> Favors bimolecular (SN2, E2)</p>
+						</div>
+					</div>
+				</div>
+				
+				<div class="info-section">
+					<h3>📊 Common Functional Groups</h3>
+					<div class="functional-groups">
+						<div class="fg-item"><strong>C=O:</strong> Electrophilic carbon, nucleophilic oxygen</div>
+						<div class="fg-item"><strong>C-X:</strong> Electrophilic carbon, good leaving group</div>
+						<div class="fg-item"><strong>C=C:</strong> Nucleophilic π electrons</div>
+						<div class="fg-item"><strong>N:</strong> Nucleophilic lone pair</div>
+						<div class="fg-item"><strong>O-H:</strong> Both nucleophilic and electrophilic</div>
+					</div>
+				</div>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1589,5 +1959,448 @@
 		opacity: 0.5;
 		cursor: not-allowed;
 		background-color: #f8f9fa;
+	}
+	
+	/* Educational Modal */
+	.modal-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		background: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+	}
+	
+	.modal-content {
+		background: white;
+		border-radius: 8px;
+		max-width: 800px;
+		max-height: 80vh;
+		overflow-y: auto;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+	}
+	
+	.modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 20px 30px;
+		border-bottom: 1px solid #eee;
+		background: #f8f9fa;
+		border-radius: 8px 8px 0 0;
+	}
+	
+	.modal-header h2 {
+		margin: 0;
+		color: #333;
+		font-size: 24px;
+	}
+	
+	.close-btn {
+		background: none;
+		border: none;
+		font-size: 28px;
+		cursor: pointer;
+		color: #666;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	
+	.close-btn:hover {
+		background: #f0f0f0;
+		color: #333;
+	}
+	
+	.modal-body {
+		padding: 30px;
+	}
+	
+	.info-section {
+		margin-bottom: 30px;
+	}
+	
+	.info-section h3 {
+		color: #0066cc;
+		margin: 0 0 15px 0;
+		font-size: 18px;
+		border-bottom: 2px solid #e3f2fd;
+		padding-bottom: 8px;
+	}
+	
+	.trend-grid {
+		display: grid;
+		gap: 15px;
+	}
+	
+	.trend-item {
+		padding: 15px;
+		background: #f8f9fa;
+		border-radius: 6px;
+		border-left: 4px solid #0066cc;
+	}
+	
+	.trend-item strong {
+		color: #333;
+	}
+	
+	.trend-item em {
+		color: #666;
+		font-size: 14px;
+	}
+	
+	.reactivity-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 20px;
+	}
+	
+	.reaction-type {
+		padding: 20px;
+		background: #fff3e0;
+		border-radius: 8px;
+		border: 1px solid #ffcc02;
+	}
+	
+	.reaction-type h4 {
+		margin: 0 0 10px 0;
+		color: #e65100;
+	}
+	
+	.reaction-type p {
+		margin: 8px 0;
+		font-size: 14px;
+		line-height: 1.4;
+	}
+	
+	.strategy-list {
+		display: grid;
+		gap: 12px;
+	}
+	
+	.strategy-item {
+		padding: 12px 15px;
+		background: #e8f5e8;
+		border-radius: 6px;
+		border-left: 4px solid #4caf50;
+		font-size: 14px;
+	}
+	
+	.strategy-item strong {
+		color: #2e7d32;
+	}
+	
+	.functional-groups {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 10px;
+	}
+	
+	.fg-item {
+		padding: 10px;
+		background: #f3e5f5;
+		border-radius: 6px;
+		font-size: 14px;
+		text-align: center;
+		border: 1px solid #ce93d8;
+	}
+	
+	.fg-item strong {
+		color: #7b1fa2;
+	}
+	
+	.polarity-grid {
+		display: grid;
+		gap: 15px;
+		margin-bottom: 20px;
+	}
+	
+	.polarity-item {
+		padding: 15px;
+		background: #e3f2fd;
+		border-radius: 6px;
+		border-left: 4px solid #1976d2;
+	}
+	
+	.polarity-item strong {
+		color: #1565c0;
+	}
+	
+	.polarity-item em {
+		color: #666;
+		font-size: 14px;
+	}
+	
+	.prediction-box {
+		background: #f1f8e9;
+		border: 2px solid #66bb6a;
+		border-radius: 8px;
+		padding: 20px;
+		margin-top: 15px;
+	}
+	
+	.prediction-box h4 {
+		margin: 0 0 15px 0;
+		color: #2e7d32;
+		font-size: 16px;
+	}
+	
+	.prediction-box ul {
+		margin: 0;
+		padding-left: 20px;
+	}
+	
+	.prediction-box li {
+		margin-bottom: 8px;
+		line-height: 1.4;
+		font-size: 14px;
+	}
+	
+	.prediction-box li strong {
+		color: #1b5e20;
+	}
+	
+	.mechanism-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 20px;
+		margin-bottom: 20px;
+	}
+	
+	.mechanism-item {
+		padding: 20px;
+		border-radius: 8px;
+		border: 2px solid;
+	}
+	
+	.mechanism-item.sn1 {
+		background: #fce4ec;
+		border-color: #e91e63;
+	}
+	
+	.mechanism-item.sn2 {
+		background: #e8f5e8;
+		border-color: #4caf50;
+	}
+	
+	.mechanism-item h4 {
+		margin: 0 0 15px 0;
+		font-size: 16px;
+	}
+	
+	.mechanism-item.sn1 h4 {
+		color: #c2185b;
+	}
+	
+	.mechanism-item.sn2 h4 {
+		color: #388e3c;
+	}
+	
+	.mechanism-item p {
+		margin: 8px 0;
+		font-size: 14px;
+		line-height: 1.4;
+	}
+	
+	.species-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 30px;
+	}
+	
+	.species-column h4 {
+		margin: 0 0 12px 0;
+		color: #0066cc;
+		font-size: 16px;
+		border-bottom: 1px solid #e3f2fd;
+		padding-bottom: 6px;
+	}
+	
+	.species-list {
+		margin-bottom: 25px;
+	}
+	
+	.species-item {
+		padding: 8px 12px;
+		background: #f8f9fa;
+		border-radius: 4px;
+		margin-bottom: 6px;
+		font-size: 14px;
+		border-left: 3px solid #0066cc;
+	}
+	
+	.species-item strong {
+		color: #1565c0;
+	}
+	
+	.reaction-conditions {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 20px;
+	}
+	
+	.condition-item {
+		padding: 20px;
+		border-radius: 8px;
+		border: 2px solid;
+	}
+	
+	.condition-item.acidic {
+		background: #fff3e0;
+		border-color: #ff9800;
+	}
+	
+	.condition-item.basic {
+		background: #e8f5e8;
+		border-color: #4caf50;
+	}
+	
+	.condition-item h4 {
+		margin: 0 0 15px 0;
+		font-size: 16px;
+	}
+	
+	.condition-item.acidic h4 {
+		color: #f57c00;
+	}
+	
+	.condition-item.basic h4 {
+		color: #388e3c;
+	}
+	
+	.condition-item ul {
+		margin: 0;
+		padding-left: 20px;
+	}
+	
+	.condition-item li {
+		margin-bottom: 8px;
+		font-size: 14px;
+		line-height: 1.4;
+	}
+	
+	.structure-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+		gap: 15px;
+	}
+	
+	.structure-item {
+		padding: 15px;
+		background: #f3e5f5;
+		border-radius: 6px;
+		border-left: 4px solid #9c27b0;
+		font-size: 14px;
+	}
+	
+	.structure-item strong {
+		color: #7b1fa2;
+	}
+	
+	.orbital-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 15px;
+	}
+	
+	.orbital-item {
+		padding: 15px;
+		background: #e1f5fe;
+		border-radius: 6px;
+		border-left: 4px solid #0277bd;
+		font-size: 14px;
+	}
+	
+	.orbital-item strong {
+		color: #0277bd;
+	}
+	
+	.energy-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 20px;
+	}
+	
+	.energy-item {
+		padding: 20px;
+		border-radius: 8px;
+		border: 2px solid;
+	}
+	
+	.energy-item.thermo {
+		background: #fff8e1;
+		border-color: #ffc107;
+	}
+	
+	.energy-item.kinetic {
+		background: #fce4ec;
+		border-color: #e91e63;
+	}
+	
+	.energy-item h4 {
+		margin: 0 0 12px 0;
+		font-size: 16px;
+	}
+	
+	.energy-item.thermo h4 {
+		color: #f57c00;
+	}
+	
+	.energy-item.kinetic h4 {
+		color: #c2185b;
+	}
+	
+	.energy-item p {
+		margin: 6px 0;
+		font-size: 14px;
+	}
+	
+	.stability-grid {
+		display: grid;
+		gap: 12px;
+	}
+	
+	.stability-item {
+		padding: 12px 15px;
+		background: #f1f8e9;
+		border-radius: 6px;
+		border-left: 4px solid #66bb6a;
+		font-size: 14px;
+	}
+	
+	.stability-item strong {
+		color: #2e7d32;
+	}
+	
+	.conditions-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+		gap: 20px;
+	}
+	
+	.condition-factor {
+		padding: 18px;
+		background: #f8f9fa;
+		border-radius: 8px;
+		border: 1px solid #dee2e6;
+	}
+	
+	.condition-factor h4 {
+		margin: 0 0 10px 0;
+		color: #495057;
+		font-size: 15px;
+	}
+	
+	.condition-factor p {
+		margin: 6px 0;
+		font-size: 13px;
+		line-height: 1.4;
 	}
 </style>
