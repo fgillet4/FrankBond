@@ -5,7 +5,13 @@ import jwt from 'jsonwebtoken';
 
 const { Pool } = pg;
 
-const JWT_SECRET = process.env.JWT_SECRET || '4774d8ad60c14b12b2f58638ff9792daea0362b2d421cbb13d4d24df76a10cf254aa03792891773e1b1485f9f563329b';
+function requiredEnv(name) {
+    const value = process.env[name];
+    if (!value) throw new Error(`${name} env var is required`);
+    return value;
+}
+
+const JWT_SECRET = requiredEnv('JWT_SECRET');
 const PORT = parseInt(process.env.PORT || '3010');
 
 const pool = new Pool({
